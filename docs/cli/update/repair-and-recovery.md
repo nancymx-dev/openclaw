@@ -39,10 +39,9 @@ and managed-service handoff runs do not prompt or collect automatic diagnostics.
 
 For failures without a verified rollback, updates using `--yes`, `--json`, or a
 non-interactive session (including piped input or output) collect diagnostics
-and print handoff commands without starting an external coding agent. The updater's
-earlier
-[unattended repair slot](/install/updating#unattended-repair-on-your-own-inference)
-can still run on configured inference. With `--json`, triage output goes to stderr so stdout retains
+and print handoff commands without starting an external coding agent. Eligible
+failures can start [post-failure triage](/install/updating#unattended-repair-on-your-own-inference)
+on configured inference after update ownership and service compensation settle. With `--json`, triage output goes to stderr so stdout retains
 the original update result. Diagnostic collection failures never hide the update
 failure.
 
@@ -78,6 +77,21 @@ its parent Gateway process. Diagnosis preserves that refusal: it does not stop t
 Gateway, retry the update, or bypass safety checks. See
 [Update troubleshooting](/install/update-troubleshooting).
 
+## Candidate Doctor stack overflow
+
+Chat-triggered updates to 2026.9.6 can fail with `authority-check-failed: Maximum
+call stack size exceeded`, sometimes preceded by `Update history reconciliation
+could not complete`. This is a candidate Doctor authority-check defect; it can
+happen on the first update, without migrated state or earlier failed runs.
+The corrective candidate can run through the installed updater with retained
+history intact. Running the older installation's standalone Doctor cannot fix
+code in the candidate package.
+
+There is no supported command to reset retained update history. `update repair`
+finishes interrupted finalization, and `update cleanup` retires eligible recovery
+originals; neither clears the run ledger. Keep history and backups rather than
+deleting database rows to work around this failure.
+
 ## `update repair`
 
 Rerun update finalization after the core package already changed but later
@@ -100,6 +114,13 @@ the updated installation, preserving its profile and state/config overrides.
 This finishes Doctor and post-core convergence through a fresh owner. Check the
 repair result before restarting an already stopped Gateway through its service
 owner. Updating the candidate cannot change the older updater already in memory.
+
+When a managed Gateway was already stopped before standalone repair, repair leaves
+it offline and warns that you must run `openclaw gateway start` to bring it online.
+If its service definition points to a different installation, repair instead reports
+the installation repair command. These maintenance warnings also appear in
+`postUpdate.doctor.warnings`; otherwise successful finalization reports
+`status: "warning"` and exits successfully.
 
 | Flag                                             | Description                                                                                                                                                                                                                                                                                      |
 | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -201,7 +222,8 @@ Failed convergence leaves the selected rows intact. If any selected run resumes
 before reconciliation, the whole selection is preserved. Full finalization JSON
 includes `reconciledRuns` when rows were selected for recovery, listing the IDs
 newly acknowledged by that invocation, including already-terminal abandoned rows.
-Successful completion with nonfatal warnings also acknowledges those rows.
+Successful convergence with nonfatal warnings also acknowledges those rows.
+Deferred maintenance preserves the selected history and pending migration obligations.
 
 For full finalization, `update repair` runs `openclaw doctor --fix`, reloads the repaired config and
 install records, syncs tracked plugins for the active update channel, updates
@@ -238,9 +260,15 @@ With `--json`, stdout contains one JSON document. Doctor panels and other
 diagnostics go to stderr, so stdout can be parsed directly. Plugin-only
 availability, installation, or load failures appear in
 `postUpdate.plugins.warnings`; finalization reports `status: "warning"` and exits
-successfully when required checks pass. Failed required Doctor execution,
-invalid configuration or state, ownership errors, and failed required readiness
-checks still exit nonzero.
+successfully when required checks pass. Doctor maintenance admission refusals
+also finish with a warning when no data is at risk. Repair restores any service
+it stopped, leaves migrations pending, and names the next repair action. Errors
+after repair writes begin, a live or unverified Gateway, unreadable state, active migration writes, unsettled
+cleanup, invalid configuration, and failed required readiness checks still exit nonzero.
+
+Recorded pending-migration warnings stop appearing after the migration owner
+records completion. Unrelated warnings and later or reintroduced obligations
+remain visible; the original update history is preserved.
 
 After post-update or finalization work fails and its child processes settle,
 OpenClaw probes the installed Gateway using the normal startup and readiness
