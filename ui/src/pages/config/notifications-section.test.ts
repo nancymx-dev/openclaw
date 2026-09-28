@@ -16,7 +16,6 @@ const userPreferences = {
     agentQuestion: false,
     humanMentioned: false,
     scheduledTaskFailed: false,
-    backgroundTaskFailed: false,
   },
   detailLevel: "private" as const,
   quietHours: { enabled: false, startMinute: 1320, endMinute: 420, timeZone: "UTC" },
@@ -227,7 +226,8 @@ describe("Web Push preference controls", () => {
 
     // Native checkboxes bypass the settings toggle; booleans are wa-switch rows.
     expect(container.querySelectorAll('input[type="checkbox"]')).toHaveLength(0);
-    expect(container.querySelectorAll("wa-switch.settings-toggle")).toHaveLength(8);
+    expect(container.querySelectorAll("wa-switch.settings-toggle")).toHaveLength(7);
+    expect(container.textContent).not.toContain("Background task failed");
 
     const unstyled = Array.from(container.querySelectorAll<HTMLElement>("select, input"))
       .filter((control) => {
