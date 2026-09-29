@@ -235,7 +235,7 @@ describe("Web Push preference controls", () => {
         return !control.classList.contains(expectedClass) || !control.getAttribute("aria-label");
       })
       .map((control) => control.outerHTML.slice(0, 60));
-    expect(container.querySelectorAll("select")).toHaveLength(11);
+    expect(container.querySelectorAll("select")).toHaveLength(10);
     expect(container.querySelectorAll('input[type="time"]')).toHaveLength(2);
     expect(unstyled).toEqual([]);
   });
