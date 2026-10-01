@@ -15,6 +15,7 @@ import {
 import { t } from "../../i18n/index.ts";
 import { registerSettingsEnglish } from "../../i18n/locales/en-settings.ts";
 import { formatUiExternalText } from "../../lib/format-error.ts";
+import { resolveTimezoneSuggestions } from "../../lib/timezone-suggestions.ts";
 import { renderSettingsSelectRow } from "./settings-select-row.ts";
 import { COMMUNICATION_SETTINGS_TARGET_IDS } from "./settings-targets.ts";
 import type { ConfigProps } from "./view-types.ts";
@@ -67,39 +68,7 @@ function detailLevel(value: string): DetailLevel {
 }
 
 type InheritChoice = "inherit" | "on" | "off";
-type QuietHoursWindow = WebPushNotificationPreferences["quietHours"];
-
-function timeZoneLabel(timeZone: string): string {
-  try {
-    const name = (style: "longGeneric" | "longOffset") =>
-      new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: style })
-        .formatToParts()
-        .find((part) => part.type === "timeZoneName")?.value ?? timeZone;
-    const offset = name("longOffset").replace(/^GMT/u, "UTC");
-    return `(${offset}) ${name("longGeneric")} · ${timeZone}`;
-  } catch {
-    // Preserve a previously saved value that this browser's ICU data no longer recognizes.
-    return timeZone;
-  }
-}
-
-// ICU supplies the browser's IANA timezone data; build the large option set once.
-const TIME_ZONE_OPTIONS = new Map(
-  ["UTC", ...(Intl.supportedValuesOf?.("timeZone") ?? [])].map(
-    (value) => [value, { value, label: timeZoneLabel(value) }] as const,
-  ),
-);
-
-function timeZoneOptions(selectedTimeZone: string) {
-  const options = new Map(TIME_ZONE_OPTIONS);
-  if (!options.has(selectedTimeZone)) {
-    options.set(selectedTimeZone, {
-      value: selectedTimeZone,
-      label: timeZoneLabel(selectedTimeZone),
-    });
-  }
-  return [...options.values()].toSorted((left, right) => left.label.localeCompare(right.label));
-}
+type QuietHoursWindow = { startMinute: number; endMinute: number; timeZone: string };
 
 function detailLevelOptions(): Array<{ value: DetailLevel; label: string }> {
   return [
@@ -119,69 +88,50 @@ function inheritChoiceOptions(
   ];
 }
 
-function renderQuietHoursWindowRows(
-  quietHours: QuietHoursWindow,
-  onChange: (quietHours: QuietHoursWindow) => void,
+function renderQuietHoursWindowRows<T extends QuietHoursWindow>(
+  quietHours: T,
+  onChange: (quietHours: T) => void,
 ) {
-  return html`
-    <div class="settings-row settings-row--stacked quiet-hours-window">
-      <div class="settings-row__text">
-        <span class="settings-row__desc"> ${t("configView.notifications.quietHoursWindow")} </span>
-      </div>
-      <div class="settings-row__control">
-        <div class="quiet-hours-window__fields">
-          <div class="quiet-hours-window__time-range">
-            <input
-              type="time"
-              class="settings-input"
-              aria-label=${t("configView.notifications.quietHoursStart")}
-              .value=${minutesToTime(quietHours.startMinute)}
-              @change=${(event: Event) =>
-                onChange({
-                  ...quietHours,
-                  startMinute: timeToMinutes(inputTarget(event).value, quietHours.startMinute),
-                })}
-            />
-            <span class="settings-row__value" aria-hidden="true">–</span>
-            <input
-              type="time"
-              class="settings-input"
-              aria-label=${t("configView.notifications.quietHoursEnd")}
-              .value=${minutesToTime(quietHours.endMinute)}
-              @change=${(event: Event) =>
-                onChange({
-                  ...quietHours,
-                  endMinute: timeToMinutes(inputTarget(event).value, quietHours.endMinute),
-                })}
-            />
-          </div>
-          <label class="quiet-hours-window__time-zone">
-            <span class="settings-row__desc">${t("configView.notifications.timeZone")}</span>
-            <select
-              class="settings-select"
-              aria-label=${t("configView.notifications.timeZone")}
-              .value=${quietHours.timeZone}
-              @change=${(event: Event) =>
-                onChange({
-                  ...quietHours,
-                  // SAFETY: this handler is bound directly to the timezone select below.
-                  timeZone: (event.currentTarget as HTMLSelectElement).value,
-                })}
-            >
-              ${timeZoneOptions(quietHours.timeZone).map(
-                (option) => html`<option
-                  value=${option.value}
-                  ?selected=${quietHours.timeZone === option.value}
-                >
-                  ${option.label}
-                </option>`,
-              )}
-            </select>
-          </label>
-        </div>
-      </div>
-    </div>
+  const rows = html`
+    ${renderSettingsRow({
+      title: t("configView.notifications.quietHoursWindow"),
+      control: html`
+        <input
+          type="time"
+          class="settings-input"
+          aria-label=${t("configView.notifications.quietHoursStart")}
+          .value=${minutesToTime(quietHours.startMinute)}
+          @change=${(event: Event) =>
+            onChange({
+              ...quietHours,
+              startMinute: timeToMinutes(inputTarget(event).value, quietHours.startMinute),
+            })}
+        />
+        <span class="settings-row__value" aria-hidden="true">–</span>
+        <input
+          type="time"
+          class="settings-input"
+          aria-label=${t("configView.notifications.quietHoursEnd")}
+          .value=${minutesToTime(quietHours.endMinute)}
+          @change=${(event: Event) =>
+            onChange({
+              ...quietHours,
+              endMinute: timeToMinutes(inputTarget(event).value, quietHours.endMinute),
+            })}
+        />
+      `,
+    })}
+    ${renderSettingsSelectRow({
+      title: t("configView.notifications.timeZone"),
+      value: quietHours.timeZone,
+      options: resolveTimezoneSuggestions([quietHours.timeZone]).map((value) => ({
+        value,
+        label: value.replaceAll("_", " "),
+      })),
+      onChange: (timeZone) => onChange({ ...quietHours, timeZone }),
+    })}
   `;
+  return html`<div class="settings-subrows quiet-hours-window">${rows}</div>`;
 }
 
 function renderAgentIdsRow(agentIds: string[], onChange: (agentIds: string[]) => void) {

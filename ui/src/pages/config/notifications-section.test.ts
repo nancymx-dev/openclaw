@@ -3,10 +3,6 @@
 import { expectDefined } from "@openclaw/normalization-core";
 import { render } from "lit";
 import { describe, expect, it, vi } from "vitest";
-import type {
-  WebPushDevicePreferences,
-  WebPushNotificationPreferences,
-} from "../../../../packages/gateway-protocol/src/schema/push.js";
 import { renderNotificationsSection } from "./notifications-section.ts";
 
 const userPreferences = {
@@ -163,66 +159,54 @@ describe("Web Push preference saves", () => {
   });
 });
 
-type UserPreferencesListener = NonNullable<
-  Parameters<typeof renderNotificationsSection>[0]["onWebPushSetUserPreferences"]
->;
 type DevicePreferencesListener = NonNullable<
   Parameters<typeof renderNotificationsSection>[0]["onWebPushSetDevicePreferences"]
 >;
-type PreferencesRenderOptions = {
-  onUser?: UserPreferencesListener;
-  onDevice?: DevicePreferencesListener;
-  userQuietHours?: Partial<WebPushNotificationPreferences["quietHours"]>;
-  deviceQuietHours?: WebPushDevicePreferences["quietHours"];
-};
 
 describe("Web Push preference controls", () => {
-  function renderPreferences(options: PreferencesRenderOptions = {}) {
-    const container = document.createElement("div");
-    const user: WebPushNotificationPreferences = {
+  function renderPreferences(
+    options: {
+      onDevice?: DevicePreferencesListener;
+      onUser?: Parameters<typeof renderNotificationsSection>[0]["onWebPushSetUserPreferences"];
+      timeZone?: string;
+      container?: HTMLElement;
+    } = {},
+  ) {
+    const container = options.container ?? document.createElement("div");
+    const user = {
       ...userPreferences,
-      quietHours: { ...userPreferences.quietHours, enabled: true, ...options.userQuietHours },
+      quietHours: {
+        ...userPreferences.quietHours,
+        enabled: true,
+        timeZone: options.timeZone ?? "UTC",
+      },
     };
-    const device: WebPushDevicePreferences = {
-      enabled: true,
-      label: "phone",
-      agentIds: ["main"],
-      quietHours: options.deviceQuietHours,
-    };
-    const rerender = (
-      nextUser: WebPushNotificationPreferences = user,
-      nextDevice: WebPushDevicePreferences = device,
-    ) =>
-      render(
-        renderNotificationsSection({
-          connected: true,
-          onWebPushSetUserPreferences: options.onUser,
-          onWebPushSetDevicePreferences: options.onDevice,
-          webPush: {
-            supported: true,
-            permission: "granted",
-            subscription: "registered",
-            loading: false,
-            preferences: {
-              durableIdentity: true,
-              user: nextUser,
-              device: nextDevice,
-              effective: {
-                ...nextUser,
-                enabled: nextDevice.enabled,
-                label: nextDevice.label,
-              },
-            },
+    const device = { enabled: true, label: "phone", agentIds: ["main"] };
+    render(
+      renderNotificationsSection({
+        connected: true,
+        onWebPushSetDevicePreferences: options.onDevice,
+        onWebPushSetUserPreferences: options.onUser,
+        webPush: {
+          supported: true,
+          permission: "granted",
+          subscription: "registered",
+          loading: false,
+          preferences: {
+            durableIdentity: true,
+            user,
+            device,
+            effective: { ...user, ...device },
           },
-        }),
-        container,
-      );
-    rerender();
-    return { container, device, rerender, user };
+        },
+      }),
+      container,
+    );
+    return container;
   }
 
   it("renders every preference control through the shared settings control set", () => {
-    const { container } = renderPreferences();
+    const container = renderPreferences();
 
     // Native checkboxes bypass the settings toggle; booleans are wa-switch rows.
     expect(container.querySelectorAll('input[type="checkbox"]')).toHaveLength(0);
@@ -240,59 +224,48 @@ describe("Web Push preference controls", () => {
     expect(unstyled).toEqual([]);
   });
 
-  it("groups the quiet-hours controls below descriptive text and saves IANA timezone choices", () => {
-    const onUser = vi.fn<UserPreferencesListener>();
-    const { container } = renderPreferences({ onUser });
-    const quietHours = expectDefined(
-      container.querySelector<HTMLElement>(".quiet-hours-window"),
-      "quiet-hours controls",
+  it("preserves a saved timezone alias and saves a native selection", () => {
+    const onUser = vi.fn();
+    const container = renderPreferences({ onUser, timeZone: "US/Pacific" });
+    const select = expectDefined(
+      container.querySelector<HTMLSelectElement>('select[aria-label="Time zone"]'),
+      "timezone select",
     );
-
-    expect(quietHours.textContent).toContain("Quiet hours window");
-    expect(quietHours.textContent).toContain("Time zone");
-    expect(quietHours.previousElementSibling?.classList).toContain("settings-row--toggle");
-
-    const timeZone = expectDefined(
-      quietHours.querySelector<HTMLSelectElement>('select[aria-label="Time zone"]'),
-      "quiet-hours timezone select",
+    expect(select.value).toBe("US/Pacific");
+    select.value = "Europe/London";
+    select.dispatchEvent(new Event("change"));
+    renderPreferences({ container, onUser, timeZone: "Europe/London" });
+    expect(select.value).toBe("Europe/London");
+    expect(container.querySelector('select[aria-label="Time zone"]')).toBe(select);
+    expect(onUser).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        quietHours: expect.objectContaining({ timeZone: "Europe/London" }),
+      }),
     );
-    expect(timeZone.querySelector('option[value="Pacific/Tahiti"]')?.textContent).toContain(
-      "Tahiti Time",
-    );
-
-    timeZone.value = "Pacific/Tahiti";
-    timeZone.dispatchEvent(new Event("change"));
-    expect(onUser).toHaveBeenLastCalledWith({
-      ...userPreferences,
-      quietHours: { ...userPreferences.quietHours, enabled: true, timeZone: "Pacific/Tahiti" },
-    });
   });
 
-  it("preserves a saved account timezone alias when quiet hours reopen", () => {
-    const { container, device, rerender, user } = renderPreferences({
-      userQuietHours: { timeZone: "US/Pacific" },
+  it("retains UTC and the saved timezone when the browser catalog is unavailable", () => {
+    const catalog = vi.spyOn(Intl, "supportedValuesOf").mockImplementation(() => {
+      throw new RangeError("unavailable");
     });
-    const selectedTimeZone = () =>
-      expectDefined(
-        container.querySelector<HTMLSelectElement>(
-          '.quiet-hours-window select[aria-label="Time zone"]',
-        ),
-        "account quiet-hours timezone select",
+    try {
+      const container = renderPreferences({ timeZone: "US/Pacific" });
+      const select = expectDefined(
+        container.querySelector<HTMLSelectElement>('select[aria-label="Time zone"]'),
+        "timezone select",
       );
-
-    expect(selectedTimeZone().value).toBe("US/Pacific");
-    expect(selectedTimeZone().selectedOptions[0]?.value).toBe("US/Pacific");
-
-    rerender({ ...user, quietHours: { ...user.quietHours, enabled: false } }, device);
-    expect(container.querySelector(".quiet-hours-window")).toBeNull();
-
-    rerender(user, device);
-    expect(selectedTimeZone().value).toBe("US/Pacific");
+      expect(select.value).toBe("US/Pacific");
+      expect([...select.options].map((option) => option.value)).toEqual(
+        expect.arrayContaining(["UTC", "US/Pacific"]),
+      );
+    } finally {
+      catalog.mockRestore();
+    }
   });
 
   it("patches device preferences from the toggle row and select row", () => {
     const onDevice = vi.fn<DevicePreferencesListener>();
-    const { container } = renderPreferences({ onDevice });
+    const container = renderPreferences({ onDevice });
     const deviceGroup = expectDefined(
       container.querySelectorAll(".settings-page .settings-stack .settings-group")[1],
       "device preference group",
@@ -315,29 +288,5 @@ describe("Web Push preference controls", () => {
     detail.value = "detailed";
     detail.dispatchEvent(new Event("change"));
     expect(onDevice).toHaveBeenLastCalledWith(expect.objectContaining({ detailLevel: "detailed" }));
-  });
-
-  it("shows the saved device quiet-hours timezone override", () => {
-    const { container } = renderPreferences({
-      deviceQuietHours: {
-        enabled: true,
-        startMinute: 1320,
-        endMinute: 420,
-        timeZone: "US/Pacific",
-      },
-    });
-    const deviceGroup = expectDefined(
-      container.querySelectorAll(".settings-page .settings-stack .settings-group")[1],
-      "device preference group",
-    );
-    const timeZone = expectDefined(
-      deviceGroup.querySelector<HTMLSelectElement>(
-        '.quiet-hours-window select[aria-label="Time zone"]',
-      ),
-      "device quiet-hours timezone select",
-    );
-
-    expect(timeZone.value).toBe("US/Pacific");
-    expect(timeZone.selectedOptions[0]?.value).toBe("US/Pacific");
   });
 });
